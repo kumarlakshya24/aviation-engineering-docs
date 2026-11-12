@@ -1,0 +1,67 @@
+# Halcyon Aero CI/CD pipeline: flight software build and test (illustrative).
+# Runs on every push to main and release branches, and on PRs.
+# DO-178C intent: every build produces traceable artifacts.
+#
+# This file lives in ci-cd/ as a reference design, so GitHub does not run it.
+# The static-analysis and unit-test jobs work as-is against this repository.
+# The HIL and certification jobs need a self-hosted bench and scripts that are not included.
+
+name: flight-software-ci
+
+on:
+  push:
+    branches: [main, release/*]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  lint:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync
+      - run: uv run ruff check .
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync
+      - run: uv run pytest -v
+
+  integration-tests:
+    name: Hardware-in-the-Loop (HIL) Tests
+    runs-on: [self-hosted, hil-bench]
+    needs: [unit-tests]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./ci-cd/scripts/run-hil-tests.sh  # not included: bench-specific
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hil-test-results
+          path: test-results/hil/
+
+  certification-artifacts:
+    name: Generate DO-178C Artifacts
+    runs-on: ubuntu-latest
+    needs: [unit-tests, lint]
+    if: startsWith(github.ref, 'refs/heads/release/')
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./ci-cd/scripts/generate-certification-docs.sh  # not included
+      - uses: actions/upload-artifact@v4
+        with:
+          name: certification-package
+          path: certification-output/
